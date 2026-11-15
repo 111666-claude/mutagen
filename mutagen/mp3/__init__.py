@@ -446,6 +446,53 @@ class MP3(ID3FileType):
 
     _mimes = ["audio/mpeg", "audio/mpg", "audio/x-mpeg"]
 
+    def get_chapters(self):
+        """get_chapters()
+
+        Return the chapter list as a list of :class:`mutagen.Chapter`
+        with millisecond start times. Returns an empty list if the file
+        has no chapters.
+
+        Returns:
+            list[mutagen.Chapter]
+        """
+
+        if self.tags is None:
+            return []
+        return self.tags.get_chapters()
+
+    def set_chapters(self, chapters):
+        """set_chapters(chapters)
+
+        Replace the chapter list stored in ID3v2 ``CHAP`` and ``CTOC``
+        frames. An ID3 tag is created if the file doesn't have one yet.
+
+        Regular tags, cover art and the audio payload are not changed.
+        Call :meth:`save` to write the change to disk.
+
+        Args:
+            chapters (list[mutagen.Chapter]): chapters with strictly
+                increasing, non negative millisecond start times
+        Raises:
+            mutagen.id3.ChapterError: if a chapter is invalid or can't be
+                represented in the ID3 format
+        """
+
+        if self.tags is None:
+            self.add_tags()
+        self.tags.set_chapters(chapters)
+
+    def clear_chapters(self):
+        """clear_chapters()
+
+        Remove every ``CHAP`` and ``CTOC`` frame. All other tags are
+        preserved. Does nothing if the file has no ID3 tag. Call
+        :meth:`save` to write the change to disk.
+        """
+
+        if self.tags is not None:
+            self.tags.clear_chapters()
+
     @property
     def mime(self):
         l = self.info.layer

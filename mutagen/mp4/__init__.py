@@ -30,9 +30,9 @@ from datetime import timedelta
 
 from mutagen import FileType, Tags, StreamInfo, PaddingInfo
 from mutagen._constants import GENRES
-from mutagen._util import cdata, insert_bytes, DictProxy, MutagenError, \
-    hashable, enum, get_size, resize_bytes, loadfile, convert_error, bchr, \
-    reraise
+from mutagen._util import cdata, insert_bytes, delete_bytes, DictProxy, \
+    MutagenError, hashable, enum, get_size, resize_bytes, loadfile, \
+    convert_error, bchr, reraise
 from ._atom import Atoms, Atom, AtomError
 from ._util import parse_full_atom
 from ._as_entry import AudioSampleEntry, ASEntryError
@@ -895,13 +895,45 @@ class MP4Tags(DictProxy, Tags):
 
 
 class Chapter(object):
-    """Chapter()
+    """Chapter(start, title)
 
     Chapter information container
+
+    Attributes:
+        start (`float`): position from the start of the file in seconds
+        title (`str`): title of the chapter
     """
+
     def __init__(self, start, title):
         self.start = start
         self.title = title
+
+    def __eq__(self, other):
+        if not isinstance(other, Chapter):
+            return NotImplemented
+        return self.start == other.start and self.title == other.title
+
+    def __ne__(self, other):
+        result = self.__eq__(other)
+        if result is NotImplemented:
+            return result
+        return not result
+
+    def __hash__(self):
+        return hash((self.start, self.title))
+
+    def __repr__(self):
+        return "Chapter(%r, %r)" % (self.start, self.title)
+
+
+#: The chpl box stores the number of chapters and each title length in a
+#: single unsigned byte.
+MAX_CHAPTERS = 0xFF
+MAX_CHAPTER_TITLE_BYTES = 0xFF
+
+#: A chapter start is stored in 100 nanosecond units in an unsigned 64 bit
+#: field; milliseconds are the common time base used by the chapter API.
+MAX_CHAPTER_START_MS = ((1 << 64) - 1) // 10000
 
 
 class MP4Chapters(Sequence):
@@ -987,15 +1019,26 @@ class MP4Chapters(Sequence):
         if not ok:
             raise MP4StreamInfoError("Invalid atom")
 
+        # The first four bytes are the full atom version and flags,
+        # followed by four reserved bytes. Version 1 is written by iTunes
+        # and Nero, but accept other versions as well.
+        if len(data) < 9:
+            raise MP4MetadataError("truncated chpl atom")
+
         chapters = data[8]
 
         pos = 9
         for i in range(chapters):
+            if pos + 9 > len(data):
+                raise MP4MetadataError("truncated chpl atom")
             start = struct.unpack(">Q", data[pos:pos + 8])[0] / 10000000
             pos += 8
 
             title_len = data[pos]
             pos += 1
+
+            if pos + title_len > len(data):
+                raise MP4MetadataError("truncated chpl atom")
 
             try:
                 title = data[pos:pos + title_len].decode()
@@ -1004,6 +1047,125 @@ class MP4Chapters(Sequence):
             pos += title_len
 
             self._chapters.append(Chapter(start, title))
+
+    def get_chapters(self):
+        """get_chapters()
+
+        Return the chapters as a list of :class:`mutagen.Chapter` with
+        ``start`` given in milliseconds instead of seconds.
+
+        Returns:
+            list[mutagen.Chapter]
+        """
+
+        from mutagen._chapters import Chapter as SimpleChapter
+
+        return [SimpleChapter(int(round(chapter.start * 1000)),
+                              chapter.title)
+                for chapter in self._chapters]
+
+    @staticmethod
+    def _validate_chapters(chapters):
+        from mutagen._chapters import Chapter as SimpleChapter
+
+        if not isinstance(chapters, (list, tuple)):
+            raise MP4MetadataValueError(
+                "chapters must be a list of Chapter")
+
+        previous = None
+        for index, chapter in enumerate(chapters):
+            if not isinstance(chapter, SimpleChapter):
+                raise MP4MetadataValueError(
+                    "chapter %d is not a Chapter instance" % index)
+
+            start = chapter.start
+            if isinstance(start, bool) or not isinstance(start, int):
+                raise MP4MetadataValueError(
+                    "chapter %d start must be an int number of "
+                    "milliseconds" % index)
+            if start < 0:
+                raise MP4MetadataValueError(
+                    "chapter %d has a negative start time" % index)
+            if start > MAX_CHAPTER_START_MS:
+                raise MP4MetadataValueError(
+                    "chapter %d start time %d exceeds the chpl limit of "
+                    "%d ms" % (index, start, MAX_CHAPTER_START_MS))
+            if previous is not None and start <= previous:
+                raise MP4MetadataValueError(
+                    "chapter %d starts at %d ms, which is not after the "
+                    "previous chapter (%d ms)" %
+                    (index, start, previous))
+            previous = start
+
+            if not isinstance(chapter.title, str):
+                raise MP4MetadataValueError(
+                    "chapter %d title must be str" % index)
+            title_bytes = chapter.title.encode("utf-8")
+            if len(title_bytes) > MAX_CHAPTER_TITLE_BYTES:
+                raise MP4MetadataValueError(
+                    "chapter %d title is %d UTF-8 bytes long but the "
+                    "chpl box allows at most %d" %
+                    (index, len(title_bytes), MAX_CHAPTER_TITLE_BYTES))
+
+        if len(chapters) > MAX_CHAPTERS:
+            raise MP4MetadataValueError(
+                "the chpl box supports at most %d chapters, got %d" %
+                (MAX_CHAPTERS, len(chapters)))
+
+    def set_chapters(self, chapters):
+        """set_chapters(chapters)
+
+        Replace the chapter list.
+
+        Args:
+            chapters (list[mutagen.Chapter]): chapters with strictly
+                increasing, non negative millisecond start times
+        Raises:
+            MP4MetadataValueError: if a chapter is invalid or can't be
+                represented in the chpl box
+        """
+
+        chapters = list(chapters)
+        self._validate_chapters(chapters)
+        self._chapters = [
+            Chapter(chapter.start / 1000.0, chapter.title)
+            for chapter in chapters]
+
+    def clear_chapters(self):
+        """clear_chapters()
+
+        Remove all chapters. Tags and audio data are not touched.
+        """
+
+        self._chapters = []
+
+    def render(self):
+        """Render the chpl atom including its header.
+
+        Returns:
+            bytes: a complete moov.udta.chpl atom
+        """
+
+        data = bytearray()
+        # The chpl box is a full atom. iTunes and Nero write version 1;
+        # some players (e.g. FFmpeg) ignore boxes carrying any other
+        # version. It is followed by four reserved bytes.
+        data += b"\x01\x00\x00\x00"
+        # reserved
+        data += b"\x00\x00\x00\x00"
+        data += bchr(len(self._chapters))
+
+        for chapter in self._chapters:
+            start_ms = int(round(chapter.start * 1000))
+            title_bytes = chapter.title.encode("utf-8")
+            # Clamp to the unsigned 64 bit range; float64 can't represent
+            # every integer near the limit exactly.
+            start_units = min(start_ms * 10000, 0xFFFFFFFFFFFFFFFF)
+            data += struct.pack(">Q", start_units)
+            data += bchr(len(title_bytes))
+            data += title_bytes
+
+        return Atom.render(b"chpl", bytes(data))
 
     def pprint(self):
         chapters = ["%s %s" % (timedelta(seconds=chapter.start), chapter.title)
@@ -1240,9 +1402,177 @@ class MP4(FileType):
         else:
             return self.tags._padding
 
-    def save(self, *args, **kwargs):
-        """save(filething=None, padding=None)"""
+    def get_chapters(self):
+        """get_chapters()
 
+        Return the chapter list as a list of :class:`mutagen.Chapter`
+        with millisecond start times. Returns an empty list if the file
+        has no chapters.
+
+        Returns:
+            list[mutagen.Chapter]
+        """
+
+        if self.chapters is None:
+            return []
+        return self.chapters.get_chapters()
+
+    def set_chapters(self, chapters):
+        """set_chapters(chapters)
+
+        Replace the chapter list stored in the ``moov.udta.chpl`` box.
+
+        Tags, cover art and the audio payload are not changed. Call
+        :meth:`save` to write the change to disk.
+
+        Args:
+            chapters (list[mutagen.Chapter]): chapters with strictly
+                increasing, non negative millisecond start times
+        Raises:
+            MP4MetadataValueError: if a chapter is invalid or can't be
+                represented in the chpl box
+        """
+
+        if self.chapters is None:
+            self.chapters = self.MP4Chapters()
+        self.chapters.set_chapters(chapters)
+
+    def clear_chapters(self):
+        """clear_chapters()
+
+        Remove all chapters. The chpl box is removed on the next
+        :meth:`save`. Tags and audio data are preserved.
+        """
+
+        if self.chapters is not None:
+            self.chapters.clear_chapters()
+
+    @loadfile(writable=True)
+    def _save_chapters(self, filething):
+        if self.chapters is None:
+            return
+
+        fileobj = filething.fileobj
+        chpl_data = self.chapters.render()
+
+        try:
+            atoms = Atoms(fileobj)
+        except AtomError as err:
+            reraise(error, err, sys.exc_info()[2])
+
+        try:
+            path = atoms.path(b"moov", b"udta", b"chpl")
+        except KeyError:
+            if not self.chapters:
+                # nothing to write and no chpl box: nothing to do
+                return
+            self.__save_chpl_new(fileobj, atoms, chpl_data)
+        else:
+            if self.chapters:
+                self.__save_chpl_existing(fileobj, atoms, path, chpl_data)
+            else:
+                self.__remove_chpl(fileobj, atoms, path)
+                self.chapters = None
+
+    def __save_chpl_new(self, fileobj, atoms, chpl_data):
+        try:
+            path = atoms.path(b"moov", b"udta")
+        except KeyError:
+            path = atoms.path(b"moov")
+
+        offset = path[-1]._dataoffset
+        insert_bytes(fileobj, len(chpl_data), offset)
+        fileobj.seek(offset)
+        fileobj.write(chpl_data)
+        self.__update_chpl_parents(fileobj, path, len(chpl_data))
+        self.__update_chpl_offsets(fileobj, atoms, len(chpl_data), offset)
+
+    def __save_chpl_existing(self, fileobj, atoms, path, chpl_data):
+        chpl = path[-1]
+        offset = chpl.offset
+        old_size = chpl.length
+        resize_bytes(fileobj, old_size, len(chpl_data), offset)
+        delta = len(chpl_data) - old_size
+
+        fileobj.seek(offset)
+        fileobj.write(chpl_data)
+        self.__update_chpl_parents(fileobj, path[:-1], delta)
+        self.__update_chpl_offsets(fileobj, atoms, delta, offset)
+
+    def __remove_chpl(self, fileobj, atoms, path):
+        chpl = path[-1]
+        offset = chpl.offset
+        old_size = chpl.length
+        delete_bytes(fileobj, old_size, offset)
+        delta = -old_size
+        self.__update_chpl_parents(fileobj, path[:-1], delta)
+        self.__update_chpl_offsets(fileobj, atoms, delta, offset)
+
+    def __update_chpl_parents(self, fileobj, path, delta):
+        if delta == 0:
+            return
+
+        for atom in path:
+            fileobj.seek(atom.offset)
+            size = cdata.uint_be(fileobj.read(4))
+            if size == 1:  # 64bit
+                size = cdata.ulonglong_be(fileobj.read(12)[4:])
+                fileobj.seek(atom.offset + 8)
+                fileobj.write(cdata.to_ulonglong_be(size + delta))
+            else:  # 32bit
+                fileobj.seek(atom.offset)
+                fileobj.write(cdata.to_uint_be(size + delta))
+
+    def __update_chpl_offsets(self, fileobj, atoms, delta, offset):
+        if delta == 0:
+            return
+
+        moov = atoms[b"moov"]
+        for atom in moov.findall(b'stco', True):
+            self.__update_chpl_offset_table(
+                fileobj, ">%dI", atom, delta, offset)
+        for atom in moov.findall(b'co64', True):
+            self.__update_chpl_offset_table(
+                fileobj, ">%dQ", atom, delta, offset)
+        try:
+            for atom in atoms[b"moof"].findall(b'tfhd', True):
+                if atom.offset > offset:
+                    atom.offset += delta
+                fileobj.seek(atom.offset + 9)
+                data = fileobj.read(atom.length - 9)
+                flags = cdata.uint_be(b"\x00" + data[:3])
+                if flags & 1:
+                    o = cdata.ulonglong_be(data[7:15])
+                    if o > offset:
+                        o += delta
+                    fileobj.seek(atom.offset + 16)
+                    fileobj.write(cdata.to_ulonglong_be(o))
+        except KeyError:
+            pass
+
+    def __update_chpl_offset_table(self, fileobj, fmt, atom, delta, offset):
+        if atom.offset > offset:
+            atom.offset += delta
+        fileobj.seek(atom.offset + 12)
+        data = fileobj.read(atom.length - 12)
+        fmt = fmt % cdata.uint_be(data[:4])
+        try:
+            offsets = struct.unpack(fmt, data[4:])
+            offsets = [o + (0, delta)[offset < o] for o in offsets]
+            fileobj.seek(atom.offset + 16)
+            fileobj.write(struct.pack(fmt, *offsets))
+        except struct.error:
+            raise MP4MetadataError("wrong offset inside %r" % atom.name)
+
+    def save(self, *args, **kwargs):
+        """save(filething=None, padding=None)
+
+        Save tag and chapter changes to the file.
+        """
+
+        # Chapters live in their own moov.udta.chpl atom, separate from
+        # the ilst tags, so they get their own pass over the file.
+        self._save_chapters()
         super(MP4, self).save(*args, **kwargs)
 
     def pprint(self):

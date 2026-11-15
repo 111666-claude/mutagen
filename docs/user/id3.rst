@@ -198,7 +198,30 @@ use EasyID3 as follows::
 Chapter Extension
 ^^^^^^^^^^^^^^^^^
 
-The following code adds two chapters to a file:
+For simple chapter lists Mutagen provides a high level API that works with
+:class:`mutagen.Chapter` objects. Each chapter has a millisecond start time
+and a title; Mutagen takes care of the ``CHAP`` and ``CTOC`` frames::
+
+    from mutagen import Chapter
+    from mutagen.mp3 import MP3
+
+    audio = MP3("example.mp3")
+    audio.set_chapters([
+        Chapter(0, u"Intro"),
+        Chapter(42000, u"Second chapter"),
+    ])
+    audio.save()
+
+The same methods are available on :class:`mutagen.id3.ID3` (and
+:class:`mutagen.easyid3.EasyID3`) instances via ``get_chapters``,
+``set_chapters`` and ``clear_chapters``. Replacing or clearing chapters only
+touches ``CHAP`` and ``CTOC`` frames, all other tags, cover art and the
+audio payload are preserved. Start times have to be non negative and
+strictly increasing, otherwise :class:`mutagen.id3.ChapterError` is raised
+before anything is written.
+
+The frames can also be managed manually. The following code adds two
+chapters to a file:
 
 ::
 

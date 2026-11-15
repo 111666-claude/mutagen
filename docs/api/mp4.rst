@@ -22,6 +22,12 @@ MP4
 .. autoclass:: mutagen.mp4.MP4Cover
     :members:
 
+.. autoclass:: mutagen.mp4.MP4Chapters
+    :members:
+
+.. autoclass:: mutagen.mp4.Chapter
+    :members:
+
 .. autoclass:: mutagen.mp4.MP4FreeForm
     :members:
 

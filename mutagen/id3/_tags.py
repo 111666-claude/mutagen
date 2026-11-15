@@ -18,6 +18,8 @@ from ._util import BitPaddedInt, unsynch, ID3JunkFrameError, \
     ID3NoHeaderError, ID3UnsupportedVersionError, ID3SaveConfig
 from ._frames import TDRC, APIC, TDOR, TIME, TIPL, TORY, TDAT, Frames_2_2, \
     TextFrame, TYER, Frame, IPLS, Frames
+from ._chapters import Chapter as Chapter, get_chapters as _get_chapters, \
+    set_chapters as _set_chapters, delete_chapters as _delete_chapters
 
 
 class ID3Header(object):
@@ -191,6 +193,18 @@ class ID3Tags(DictProxy, Tags):
         framedata = [
             (f, save_frame(f, config=config)) for f in self.values()]
 
+        # Chapters have to be stored in the order given by the top level
+        # CTOC. Some players ignore the CTOC and just present CHAP frames
+        # in the order they appear in the tag.
+        from ._specs import CTOCFlags
+        chapter_order = {}
+        for ctoc in self.getall("CTOC"):
+            if int(ctoc.flags) & CTOCFlags.TOP_LEVEL:
+                for position, element_id in enumerate(
+                        ctoc.child_element_ids):
+                    chapter_order[element_id] = position
+                break
+
         def get_prio(frame):
             try:
                 return order.index(frame.FrameID)
@@ -209,6 +223,11 @@ class ID3Tags(DictProxy, Tags):
                 # can influence, say, what image is chosen as cover image
                 # in many players.
                 secondary_key = i
+            elif frame.FrameID == "CHAP" and \
+                    frame.element_id in chapter_order:
+                # Keep referenced chapters in CTOC order, independent of
+                # their frame size.
+                secondary_key = chapter_order[frame.element_id]
             else:
                 secondary_key = len(data)
 
@@ -276,6 +295,49 @@ class ID3Tags(DictProxy, Tags):
             for k in list(self.keys()):
                 if k.startswith(key):
                     del self[k]
+
+    def get_chapters(self):
+        """get_chapters()
+
+        Return the chapter list as a list of :class:`mutagen.Chapter`.
+
+        The list is ordered by playback time and each chapter has a
+        ``start`` in milliseconds and a ``title``. Returns an empty list
+        if the tag contains no chapters.
+
+        Returns:
+            list[mutagen.Chapter]
+        """
+
+        return _get_chapters(self)
+
+    def set_chapters(self, chapters):
+        """set_chapters(chapters)
+
+        Replace the chapter list.
+
+        Only ID3v2 ``CHAP`` and ``CTOC`` frames are changed; all other
+        frames such as cover art or regular text tags are preserved. Call
+        :meth:`save` to write the change to disk.
+
+        Args:
+            chapters (list[mutagen.Chapter]): chapters with strictly
+                increasing, non negative millisecond start times
+        Raises:
+            mutagen.id3.ChapterError: if a chapter is invalid or can't be
+                represented in the ID3 format
+        """
+
+        _set_chapters(self, chapters)
+
+    def clear_chapters(self):
+        """clear_chapters()
+
+        Remove every ``CHAP`` and ``CTOC`` frame. All other frames are
+        preserved. Call :meth:`save` to write the change to disk.
+        """
+
+        _delete_chapters(self)
 
     def pprint(self):
         """

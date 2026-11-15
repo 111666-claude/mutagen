@@ -2,7 +2,7 @@ Main Module
 -----------
 
 .. automodule:: mutagen
-    :members: File, version, version_string
+    :members: File, Chapter, version, version_string
 
 
 Base Classes

@@ -80,6 +80,8 @@ from ._util import ID3EncryptionUnsupportedError as ID3EncryptionUnsupportedErro
     ID3BadCompressedData as ID3BadCompressedData, ID3TagError as ID3TagError, \
     ID3Warning as ID3Warning, BitPaddedInt as _BitPaddedIntForPicard
 
+from ._chapters import ChapterError as ChapterError
+
 # support open(filename) as interface
 Open = ID3
 
@@ -92,4 +94,4 @@ EncodedTextSpec = MultiSpec = _DummySpecForPicard
 BitPaddedInt = _BitPaddedIntForPicard
 
 
-__all__ = ['ID3', 'ID3FileType', 'Frames', 'Open', 'delete']
+__all__ = ['ID3', 'ID3FileType', 'Frames', 'Open', 'delete', 'ChapterError']

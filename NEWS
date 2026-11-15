@@ -1,3 +1,15 @@
+1.49.0 - UNRELEASED
+-------------------
+
+* Add a unified chapter API based on the new ``mutagen.Chapter`` container
+  (millisecond start time and title): ``get_chapters``, ``set_chapters`` and
+  ``clear_chapters`` on ``MP3``/``ID3`` (CHAP/CTOC) and ``MP4`` (chpl).
+  Replacing chapters leaves tags, cover art and the audio payload untouched;
+  invalid input (negative or non increasing times, overlong titles or too
+  many chapters) raises before anything is written.
+* MP4: write the chpl atom as version 1 so players such as FFmpeg recognize
+  the chapters, and make reading tolerate truncated atoms.
+
 .. _release-1.48.1:
 
 1.48.1 - 2026-06-25

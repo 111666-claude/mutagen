@@ -18,9 +18,10 @@ depending on tag or format. They may also be entirely different objects
 for certain keys, again depending on format.
 """
 
+from mutagen._chapters import Chapter
+from mutagen._file import File, FileType, StreamInfo
+from mutagen._tags import Metadata, PaddingInfo, Tags
 from mutagen._util import MutagenError
-from mutagen._file import FileType, StreamInfo, File
-from mutagen._tags import Tags, Metadata, PaddingInfo
 
 version = (1, 48, 1)
 """Version tuple."""
@@ -29,13 +30,14 @@ version_string = ".".join(map(str, version))
 """Version string."""
 
 __all__ = [
-    "MutagenError",
-    "FileType",
-    "StreamInfo",
+    "Chapter",
     "File",
-    "Tags",
+    "FileType",
     "Metadata",
+    "MutagenError",
     "PaddingInfo",
+    "StreamInfo",
+    "Tags",
     "version",
     "version_string",
 ]

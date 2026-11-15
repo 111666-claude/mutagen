@@ -205,6 +205,33 @@ class EasyID3(DictMixin, Metadata):
     filename = property(lambda s: s.__id3.filename,
                         lambda s, fn: setattr(s.__id3, 'filename', fn))
 
+    def get_chapters(self):
+        """get_chapters()
+
+        Return the chapter list as a list of :class:`mutagen.Chapter`.
+        See :meth:`mutagen.id3.ID3.get_chapters`.
+        """
+
+        return self.__id3.get_chapters()
+
+    def set_chapters(self, chapters):
+        """set_chapters(chapters)
+
+        Replace the chapter list. See
+        :meth:`mutagen.id3.ID3.set_chapters`.
+        """
+
+        self.__id3.set_chapters(chapters)
+
+    def clear_chapters(self):
+        """clear_chapters()
+
+        Remove every ``CHAP`` and ``CTOC`` frame. See
+        :meth:`mutagen.id3.ID3.clear_chapters`.
+        """
+
+        self.__id3.clear_chapters()
+
     @property
     def size(self):
         return self.__id3.size
