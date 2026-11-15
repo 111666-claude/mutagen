@@ -1,3 +1,15 @@
+.. _release-1.49.0:
+
+1.49.0 - unreleased
+-------------------
+
+* Add :mod:`mutagen.lyrics`, a unified synchronised lyrics model with
+  millisecond timestamps, text and language identifiers.  MP3 uses ID3
+  ``SYLT`` frames while FLAC (``LYRICS`` Vorbis comment) and M4A
+  (``\xa9lyr`` atom) store LRC text blocks; multiple languages,
+  same-timestamp rows and Unicode text round-trip across all three
+  formats
+
 .. _release-1.48.1:
 
 1.48.1 - 2026-06-25

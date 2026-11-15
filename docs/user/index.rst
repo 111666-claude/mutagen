@@ -15,3 +15,4 @@ User Guide
     vcomment
     apev2
     mp4
+    lyrics
