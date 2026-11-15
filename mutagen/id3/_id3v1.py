@@ -71,7 +71,7 @@ def find_id3v1(fileobj, v2_version=4, known_frames=None):
         return (tag, offset)
 
 
-# ID3v1.1 support.
+# ID3v1.0 and ID3v1.1 support.
 def ParseID3v1(data, v2_version=4, known_frames=None):
     """Parse an ID3v1 tag, returning a list of ID3v2 frames
 
@@ -99,16 +99,25 @@ def ParseID3v1(data, v2_version=4, known_frames=None):
     # wrote only the characters available - e.g. "1" or "" - into the
     # year field. To parse those, reduce the size of the year field.
     # Amazingly, "0s" works as a struct format string.
-    unpack_fmt = "3s30s30s30s%ds29sBB" % (len(data) - 124)
+    unpack_fmt = "3s30s30s30s%ds30sB" % (len(data) - 124)
 
     try:
-        tag, title, artist, album, year, comment, track, genre = unpack(
+        tag, title, artist, album, year, comment, genre = unpack(
             unpack_fmt, data)
     except StructError:
         return None
 
     if tag != b"TAG":
         return None
+
+    track = None
+    if comment[-2] == 0 and comment[-1] != 0:
+        # ID3v1.1: the last two bytes of the comment field are a null
+        # separator followed by the track number. A null in the last
+        # byte means no track (ID3v1.0), so don't eat the two comment
+        # bytes in that case.
+        track = comment[-1]
+        comment = comment[:-2]
 
     def fix(data):
         return data.split(b"\x00")[0].strip().decode('latin1')
@@ -149,10 +158,9 @@ def ParseID3v1(data, v2_version=4, known_frames=None):
         frames["COMM"] = frame_class["COMM"](
             encoding=0, lang="eng", desc="ID3v1 Comment", text=comment)
 
-    # Don't read a track number if it looks like the comment was
-    # padded with spaces instead of nulls (thanks, WinAmp).
-    if (track and frame_class["TRCK"] and
-            ((track != 32) or (data[-3] == b'\x00'[0]))):
+    # Only read a track number if the comment field is laid out as
+    # ID3v1.1 (a null separator followed by the track byte).
+    if track and frame_class["TRCK"]:
         frames["TRCK"] = TRCK(encoding=0, text=str(track))
     if genre != 255 and frame_class["TCON"]:
         frames["TCON"] = TCON(encoding=0, text=str(genre))
@@ -160,7 +168,13 @@ def ParseID3v1(data, v2_version=4, known_frames=None):
 
 
 def MakeID3v1(id3):
-    """Return an ID3v1.1 tag string from a dict of ID3v2.4 frames."""
+    """Return an ID3v1 tag string from a dict of ID3v2.4 frames.
+
+    Writes an ID3v1.0 tag, unless there is a valid track number, in which
+    case an ID3v1.1 tag is written. In an ID3v1.0 tag the comment field
+    is 30 bytes, in an ID3v1.1 tag it is 28 bytes followed by a null
+    separator and the one byte track number.
+    """
 
     v1 = {}
 
@@ -174,21 +188,34 @@ def MakeID3v1(id3):
 
     cmnt = b""
     if "COMM" in id3:
-        cmnt = id3["COMM"].text[0].encode('latin1', 'replace')[:28]
+        cmnt = id3["COMM"].text[0].encode('latin1', 'replace')[:30]
     else:
         for key, frame in id3.items():
             if key.startswith("COMM:"):
-                cmnt = frame.text[0].encode('latin1', 'replace')[:28]
+                cmnt = frame.text[0].encode('latin1', 'replace')[:30]
                 break
-    v1["comment"] = cmnt + (b"\x00" * (29 - len(cmnt)))
 
+    track = None
     if "TRCK" in id3:
         try:
-            v1["track"] = bchr(+id3["TRCK"])
-        except ValueError:
-            v1["track"] = b"\x00"
+            number = +id3["TRCK"]
+            # 0 means "no track" in ID3v1.1 and anything outside the byte
+            # range can't be stored, so use the v1.0 layout in both cases.
+            if 0 < number <= 255:
+                track = bchr(number)
+        except (ValueError, IndexError):
+            pass
+
+    if track is None:
+        v1["comment"] = cmnt.ljust(30, b"\x00")
+        v1["track"] = b""
     else:
-        v1["track"] = b"\x00"
+        # ID3v1.1: 28 byte comment, null separator, one byte track number
+        v1["comment"] = cmnt[:28].ljust(28, b"\x00")
+        v1["track"] = b"\x00" + track
+
+    if len(v1["comment"]) + len(v1["track"]) != 30:
+        raise ValueError("comment/track field must be 30 bytes long")
 
     if "TCON" in id3:
         try:

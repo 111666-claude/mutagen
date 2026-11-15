@@ -4,6 +4,8 @@
 -------------------
 
 * Changed the default branch from master to main
+* ID3: Fix reading/writing ID3v1.0 and ID3v1.1 tags, keeping the full
+  30 byte comment when no valid track number is present
 
 
 .. _release-1.47.0:
