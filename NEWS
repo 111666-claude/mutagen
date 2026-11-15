@@ -1,3 +1,16 @@
+.. _release-unreleased:
+
+Unreleased
+----------
+
+* New :mod:`mutagen.cover` module: a unified front-cover API
+  (:func:`get_front_cover`, :func:`set_front_cover`,
+  :func:`remove_front_cover`) spanning MP3 (ID3 ``APIC``), FLAC
+  (``PICTURE`` blocks) and M4A/MP4 (``covr``). Reads return the raw image
+  bytes with the real JPEG/PNG type sniffed from the content; removing the
+  front cover leaves back covers, other pictures and unrelated tags
+  untouched.
+
 .. _release-1.48.1:
 
 1.48.1 - 2026-06-25

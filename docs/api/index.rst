@@ -9,6 +9,7 @@ API Reference
     aiff
     ape
     asf
+    cover
     dsdiff
     dsf
     flac
