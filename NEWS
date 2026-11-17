@@ -1,3 +1,16 @@
+.. _release-1.49.0:
+
+1.49.0 - unreleased
+-------------------
+
+* Add ``mutagen.tagpatch``: field-level tag patches for ID3, FLAC and MP4.
+  ``diff_tags()`` computes the fields that changed between two tag states
+  (with content fingerprints of the original values, binary values compared
+  by content) and ``apply_patch()`` applies them to a freshly loaded tag,
+  touching only those fields and reporting conflicts when a field was
+  modified by someone else in the meantime. Patches can be serialized to
+  JSON with ``TagPatch.to_json()``/``TagPatch.from_json()``.
+
 .. _release-1.48.1:
 
 1.48.1 - 2026-06-25

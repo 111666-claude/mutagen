@@ -26,6 +26,7 @@ API Reference
     optimfrog
     smf
     tak
+    tagpatch
     trueaudio
     vcomment
     wave
