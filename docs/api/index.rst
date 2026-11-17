@@ -13,6 +13,7 @@ API Reference
     dsf
     flac
     id3
+    lyrics
     monkeysaudio
     mp3
     mp4

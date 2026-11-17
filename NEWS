@@ -1,3 +1,13 @@
+Unreleased
+----------
+
+* Add ``mutagen.lyrics``: a unified entry point for timed lyrics. ID3
+  ``SYLT`` frames are read and written per language using millisecond time
+  stamps, while FLAC Vorbis ``LYRICS`` comments are read and written as LRC.
+  Repeated time stamps keep their order, LRC fractional seconds and empty
+  lines are handled, and updating one language leaves other languages and
+  unknown tags untouched.
+
 .. _release-1.48.1:
 
 1.48.1 - 2026-06-25
