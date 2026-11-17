@@ -1,3 +1,11 @@
+1.49.0 - unreleased
+-------------------
+
+* Add ``mutagen.rating``: unified read/write of 0-5 star ratings and play
+  counts across MP3 (ID3 POPM, per owner) and FLAC (``RATING``/``PLAYCOUNT``
+  Vorbis comments, default user), with a linear 0-255 mapping and explicit
+  errors for conflicting, out-of-range or malformed data
+
 .. _release-1.48.1:
 
 1.48.1 - 2026-06-25

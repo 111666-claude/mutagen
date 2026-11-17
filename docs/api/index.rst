@@ -24,6 +24,7 @@ API Reference
     oggtheora
     oggvorbis
     optimfrog
+    rating
     smf
     tak
     trueaudio
