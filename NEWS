@@ -1,3 +1,16 @@
+.. _release-1.49.0:
+
+1.49.0 - unreleased
+-------------------
+
+* WAVE: Read, edit and write RIFF ``LIST/INFO`` tags through the new
+  ``WAVE.info_tags`` attribute and the standalone
+  :class:`mutagen.wave.RiffInfo` class. Common four character codes and raw
+  unknown keys are exposed, and entries can be added, replaced and deleted.
+  Saving recomputes the LIST and RIFF sizes and the even byte padding while
+  leaving the audio data and an existing ID3 chunk untouched. The INFO and
+  ID3 tags are independent of each other.
+
 .. _release-1.48.1:
 
 1.48.1 - 2026-06-25
