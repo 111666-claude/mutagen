@@ -36,6 +36,7 @@ from mutagen._util import cdata, insert_bytes, DictProxy, MutagenError, \
 from ._atom import Atoms, Atom, AtomError
 from ._util import parse_full_atom
 from ._as_entry import AudioSampleEntry, ASEntryError
+from ._xtra import MP4Xtra, XtraError
 
 
 class error(MutagenError):
@@ -58,7 +59,8 @@ class MP4MetadataValueError(ValueError, MP4MetadataError):
     pass
 
 
-__all__ = ['MP4', 'Open', 'delete', 'MP4Cover', 'MP4FreeForm', 'AtomDataType']
+__all__ = ['MP4', 'Open', 'delete', 'MP4Cover', 'MP4FreeForm', 'AtomDataType',
+           'MP4Xtra']
 
 
 @enum
@@ -1187,10 +1189,15 @@ class MP4(FileType):
     Attributes:
         info (`MP4Info`)
         tags (`MP4Tags`)
+        xtra (`MP4Xtra` or None): read-only view of the Microsoft ``Xtra``
+            atom, which is where Windows stores e.g. ``WM/Director``.
+            `None` if the file has no ``Xtra`` atom.  It is never written
+            back, so it does not affect :attr:`tags`.
     """
 
     MP4Tags = MP4Tags
     MP4Chapters = MP4Chapters
+    MP4Xtra = MP4Xtra
 
     _mimes = ["audio/mp4", "audio/x-m4a", "audio/mpeg4", "audio/aac"]
 
@@ -1233,6 +1240,18 @@ class MP4(FileType):
             except Exception as err:
                 reraise(MP4MetadataError, err, sys.exc_info()[2])
 
+        if not MP4Xtra._can_load(atoms):
+            self.xtra = None
+        else:
+            try:
+                self.xtra = self.MP4Xtra(atoms, fileobj)
+            except XtraError:
+                # A broken Xtra atom must never make the regular tags
+                # unreadable.
+                self.xtra = None
+            except Exception as err:
+                reraise(MP4MetadataError, err, sys.exc_info()[2])
+
     @property
     def _padding(self):
         if self.tags is None:
@@ -1264,6 +1283,13 @@ class MP4(FileType):
             pass
         else:
             stream += "\n" + chapters
+
+        try:
+            xtra = self.xtra.pprint()
+        except AttributeError:
+            pass
+        else:
+            stream += ((xtra and "\n" + xtra) or "")
 
         return stream
 

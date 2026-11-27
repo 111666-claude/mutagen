@@ -1,3 +1,13 @@
+1.49.0 - UNRELEASED
+-------------------
+
+* MP4: Read the Microsoft ``Xtra`` atom (``moov.udta.Xtra``) through the
+  new read-only :attr:`MP4.xtra` mapping. This is where Windows stores
+  fields such as ``WM/Director`` and ``WM/SharedUserRating``; text and
+  integer values keep multiple values and stay separate from the regular
+  iTunes tags. Files without the atom are unchanged, malformed records
+  don't affect the regular tags, and saving tags leaves the atom alone.
+
 .. _release-1.48.1:
 
 1.48.1 - 2026-06-25

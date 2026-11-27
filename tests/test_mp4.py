@@ -9,10 +9,12 @@ import pytest
 from tests import TestCase, DATA_DIR, get_temp_copy
 from mutagen.mp4 import (MP4, MP4Tags, MP4Info, delete, MP4Cover,
                          MP4MetadataError, MP4FreeForm, error, AtomDataType,
-                         _item_sort_key, MP4StreamInfoError)
+                         _item_sort_key, MP4StreamInfoError, MP4Xtra)
 from mutagen.mp4._atom import Atom, Atoms, AtomError
 from mutagen.mp4._util import parse_full_atom
 from mutagen.mp4._as_entry import AudioSampleEntry, ASEntryError
+from mutagen.mp4._xtra import (
+    XtraError, VT_UNICODE, VT_UINT64, _decode_utf16, _parse_value)
 from mutagen._util import cdata
 
 
@@ -460,6 +462,285 @@ class TMP4Tags(TestCase):
         data = MP4Tags()._MP4Tags__render_freeform(key, value)
         v = self.wrap_ilst(data)[key][0]
         self.failUnlessEqual(v.dataformat, AtomDataType.UTF8)
+
+
+class TMP4Xtra(TestCase):
+
+    original = os.path.join(DATA_DIR, "xtra-tags.m4a")
+
+    def wrap_xtra(self, data, ilst=b""):
+        xtra = Atom.render(b"Xtra", data)
+        meta = Atom.render(b"meta", b"\x00" * 4 + Atom.render(b"ilst", ilst))
+        udta = Atom.render(b"udta", meta + xtra)
+        fileobj = BytesIO(Atom.render(b"moov", udta))
+        return MP4Xtra(Atoms(fileobj), fileobj)
+
+    def utf16(self, value):
+        return (value + u"\x00").encode("utf-16-le")
+
+    def xtra_tag(self, name, values):
+        body = b""
+        for value_type, payload in values:
+            body += struct.pack(">IH", 6 + len(payload), value_type)
+            body += payload
+        data = struct.pack(">I", len(name)) + name
+        data += struct.pack(">I", len(values)) + body
+        return struct.pack(">I", 4 + len(data)) + data
+
+    def test_missing_atom(self):
+        fileobj = BytesIO(Atom.render(b"moov", b""))
+        atoms = Atoms(fileobj)
+        self.assertFalse(MP4Xtra._can_load(atoms))
+        self.assertRaises(XtraError, MP4Xtra, atoms, fileobj)
+
+    def test_parse_text_and_integer(self):
+        data = self.xtra_tag(
+            b"WM/Director", [(VT_UNICODE, self.utf16(u"Jane Doe"))])
+        data += self.xtra_tag(
+            b"WM/SharedUserRating", [(VT_UINT64, struct.pack("<Q", 75))])
+        xtra = self.wrap_xtra(data)
+        self.assertEqual(xtra["WM/Director"], [u"Jane Doe"])
+        self.assertEqual(xtra["WM/SharedUserRating"], [75])
+        self.assertIsNone(xtra.error)
+        self.assertEqual(len(xtra), 2)
+
+    def test_multiple_values_in_one_tag(self):
+        data = self.xtra_tag(
+            b"WM/Director",
+            [(VT_UNICODE, self.utf16(u"Jane Doe")),
+             (VT_UNICODE, self.utf16(u"John Smith"))])
+        xtra = self.wrap_xtra(data)
+        self.assertEqual(xtra["WM/Director"], [u"Jane Doe", u"John Smith"])
+
+    def test_multiple_records_same_name_are_merged(self):
+        data = self.xtra_tag(
+            b"WM/Director", [(VT_UNICODE, self.utf16(u"Jane"))])
+        data += self.xtra_tag(
+            b"WM/Director", [(VT_UNICODE, self.utf16(u"John"))])
+        xtra = self.wrap_xtra(data)
+        self.assertEqual(xtra["WM/Director"], [u"Jane", u"John"])
+
+    def test_unknown_types_are_ignored(self):
+        # 21 is a FILETIME, which is not exposed; the other values are.
+        data = self.xtra_tag(
+            b"WM/Director",
+            [(21, b"\x00" * 8), (VT_UNICODE, self.utf16(u"Jane"))])
+        xtra = self.wrap_xtra(data)
+        self.assertEqual(xtra["WM/Director"], [u"Jane"])
+        self.assertIsNone(xtra.error)
+
+    def test_keys_are_distinct_from_ilst(self):
+        ilst = Atom.render(
+            b"\xa9nam", Atom.render(b"data", b"\x00" * 8 + b"Title"))
+        data = self.xtra_tag(
+            b"WM/Director", [(VT_UNICODE, self.utf16(u"Jane"))])
+        xtra = self.wrap_xtra(data, ilst)
+        self.assertEqual(set(xtra.keys()), {u"WM/Director"})
+        self.assertNotIn(u"WM/Director", MP4Tags().keys())
+
+    def test_bad_tag_size_keeps_earlier_values(self):
+        good = self.xtra_tag(
+            b"WM/Director", [(VT_UNICODE, self.utf16(u"Jane"))])
+        data = good + struct.pack(">I", 0xFFFFFFF0) + b"WM/Shared" + b"\x00"
+        xtra = self.wrap_xtra(data)
+        self.assertEqual(xtra["WM/Director"], [u"Jane"])
+        self.assertIn(u"size", xtra.error)
+
+    def test_truncated_tag(self):
+        good = self.xtra_tag(
+            b"WM/Director", [(VT_UNICODE, self.utf16(u"Jane"))])
+        data = good + struct.pack(">I", 40) + b"WM/Shared"
+        xtra = self.wrap_xtra(data)
+        self.assertEqual(xtra["WM/Director"], [u"Jane"])
+        self.assertIsNotNone(xtra.error)
+
+    def test_truncated_value_header(self):
+        name = b"WM/Director"
+        data = struct.pack(">I", 4 + 4 + len(name) + 4 + 2)
+        data += struct.pack(">I", len(name)) + name
+        data += struct.pack(">I", 2) + b"\x00\x00"
+        xtra = self.wrap_xtra(data)
+        self.assertEqual(dict(xtra), {})
+        self.assertIn(u"truncated", xtra.error)
+
+    def test_invalid_text_keeps_other_values(self):
+        # odd number of bytes for UTF-16
+        data = self.xtra_tag(b"WM/Director", [(VT_UNICODE, b"\x4a\x00\x6e")])
+        data += self.xtra_tag(
+            b"WM/SharedUserRating", [(VT_UINT64, struct.pack("<Q", 75))])
+        xtra = self.wrap_xtra(data)
+        self.assertNotIn(u"WM/Director", xtra)
+        self.assertEqual(xtra["WM/SharedUserRating"], [75])
+        self.assertIn(u"encoding", xtra.error)
+
+    def test_invalid_surrogates(self):
+        data = self.xtra_tag(
+            b"WM/Director", [(VT_UNICODE, b"\x00\xd8\x41\x00")])
+        xtra = self.wrap_xtra(data)
+        self.assertNotIn(u"WM/Director", xtra)
+        self.assertIn(u"encoding", xtra.error)
+
+    def test_bad_integer_size(self):
+        data = self.xtra_tag(b"WM/SharedUserRating", [(VT_UINT64, b"\x01")])
+        xtra = self.wrap_xtra(data)
+        self.assertNotIn(u"WM/SharedUserRating", xtra)
+        self.assertIn(u"integer", xtra.error)
+
+    def test_invalid_name_is_skipped(self):
+        name = b"\xff\xfe\xfd"
+        bad = struct.pack(">I", 4 + 4 + len(name) + 4)
+        bad += struct.pack(">I", len(name)) + name + struct.pack(">I", 0)
+        good = self.xtra_tag(
+            b"WM/Director", [(VT_UNICODE, self.utf16(u"Jane"))])
+        xtra = self.wrap_xtra(bad + good)
+        self.assertEqual(xtra["WM/Director"], [u"Jane"])
+        self.assertIn(u"name", xtra.error)
+
+    def test_zero_count(self):
+        data = self.xtra_tag(b"WM/Director", [])
+        xtra = self.wrap_xtra(data)
+        self.assertEqual(dict(xtra), {})
+        self.assertIsNone(xtra.error)
+
+    def test_trailing_short_garbage_is_ignored(self):
+        good = self.xtra_tag(
+            b"WM/Director", [(VT_UNICODE, self.utf16(u"Jane"))])
+        xtra = self.wrap_xtra(good + b"\x00\x00")
+        self.assertEqual(xtra["WM/Director"], [u"Jane"])
+        self.assertIsNone(xtra.error)
+
+    def test_decode_utf16_bom(self):
+        self.assertEqual(_decode_utf16(b"\xff\xfe" + b"a\x00"), u"a")
+        self.assertEqual(_decode_utf16(b"\xfe\xff" + b"\x00a"), u"a")
+        self.assertEqual(_decode_utf16(b""), u"")
+
+    def test_parse_value_unsupported(self):
+        value, err = _parse_value(21, b"\x00" * 8)
+        self.assertIsNone(err)
+        self.assertTrue(value is not None)
+
+    def test_pprint(self):
+        data = self.xtra_tag(
+            b"WM/Director", [(VT_UNICODE, self.utf16(u"Jane"))])
+        xtra = self.wrap_xtra(data)
+        self.assertEqual(xtra.pprint(), u"Xtra:WM/Director=Jane")
+
+    def test_readonly(self):
+        xtra = self.wrap_xtra(b"")
+        with self.assertRaises(TypeError):
+            xtra[u"WM/Director"] = []
+        with self.assertRaises(TypeError):
+            del xtra[u"WM/Director"]
+        with self.assertRaises(AttributeError):
+            xtra.clear()
+
+    def test_sorting_stable(self):
+        data = self.xtra_tag(
+            b"WM/Director", [(VT_UNICODE, self.utf16(u"Jane"))])
+        data += self.xtra_tag(
+            b"WM/SharedUserRating", [(VT_UINT64, struct.pack("<Q", 75))])
+        xtra = self.wrap_xtra(data)
+        self.assertEqual(list(xtra), sorted(xtra.keys()))
+
+
+class TMP4XtraFile(TestCase):
+
+    original = os.path.join(DATA_DIR, "xtra-tags.m4a")
+
+    def setUp(self):
+        self.filename = get_temp_copy(self.original)
+        self.audio = MP4(self.filename)
+
+    def tearDown(self):
+        os.unlink(self.filename)
+
+    def test_read_values(self):
+        self.assertTrue(self.audio.xtra)
+        self.assertEqual(
+            self.audio.xtra["WM/Director"], [u"Jane Doe", u"John Smith"])
+        self.assertEqual(self.audio.xtra["WM/SharedUserRating"], [75])
+        self.assertIsNone(self.audio.xtra.error)
+
+    def test_separate_from_regular_tags(self):
+        self.assertEqual(self.audio["\xa9nam"], [u"Regular Title"])
+        self.assertEqual(self.audio["\xa9ART"], [u"Regular Artist"])
+        self.assertNotIn(u"WM/Director", self.audio.tags)
+        self.assertNotIn(u"\xa9nam", self.audio.xtra)
+
+    def test_save_regular_tags_keeps_xtra(self):
+        self.audio["\xa9nam"] = [u"New Title"]
+        self.audio.save()
+        audio = MP4(self.filename)
+        self.assertEqual(audio["\xa9nam"], [u"New Title"])
+        self.assertEqual(
+            audio.xtra["WM/Director"], [u"Jane Doe", u"John Smith"])
+        self.assertEqual(audio.xtra["WM/SharedUserRating"], [75])
+
+    def test_save_does_not_write_xtra_into_ilst(self):
+        self.audio["\xa9nam"] = [u"New Title"]
+        self.audio.save()
+        with open(self.filename, "rb") as fileobj:
+            atoms = Atoms(fileobj)
+            ilst = atoms[b"moov", b"udta", b"meta", b"ilst"]
+            names = [child.name for child in ilst.children]
+        self.assertNotIn(b"Xtra", names)
+        self.assertNotIn(u"WM/Director", MP4(self.filename).tags)
+
+    def test_pprint_contains_xtra(self):
+        self.assertIn(u"Xtra:WM/Director=Jane Doe", self.audio.pprint())
+
+    def test_delete_keeps_xtra(self):
+        self.audio.delete()
+        audio = MP4(self.filename)
+        self.assertFalse(audio.tags)
+        self.assertEqual(
+            audio.xtra["WM/Director"], [u"Jane Doe", u"John Smith"])
+
+    def test_no_xtra_is_none(self):
+        filename = get_temp_copy(os.path.join(DATA_DIR, "has-tags.m4a"))
+        try:
+            self.assertIsNone(MP4(filename).xtra)
+        finally:
+            os.unlink(filename)
+
+    def test_xtra_without_ilst(self):
+        # drop the ilst atom but keep Xtra: tags is None, xtra still works
+        with open(self.filename, "rb") as fileobj:
+            data = bytearray(fileobj.read())
+
+        ilst = data.find(b"ilst", data.find(b"meta"), data.find(b"Xtra"))
+        ilst_offset = ilst - 4
+        ilst_size = struct.unpack(">I", data[ilst_offset:ilst_offset + 4])[0]
+        del data[ilst_offset:ilst_offset + ilst_size]
+
+        meta = data.rfind(b"meta", 0, data.find(b"Xtra")) - 4
+        meta_size = struct.unpack(">I", data[meta:meta + 4])[0]
+        data[meta:meta + 4] = struct.pack(">I", meta_size - ilst_size)
+
+        udta = data.rfind(b"udta", 0, data.find(b"Xtra")) - 4
+        udta_size = struct.unpack(">I", data[udta:udta + 4])[0]
+        data[udta:udta + 4] = struct.pack(">I", udta_size - ilst_size)
+
+        with open(self.filename, "wb") as fileobj:
+            fileobj.write(data)
+
+        audio = MP4(self.filename)
+        self.assertIsNone(audio.tags)
+        self.assertEqual(audio.xtra["WM/SharedUserRating"], [75])
+
+    def test_truncated_atom_does_not_hide_tags(self):
+        # Claim the atom extends past the end of the file, so reading its
+        # payload comes up short; the regular tags must still be readable.
+        with open(self.filename, "rb") as fileobj:
+            data = bytearray(fileobj.read())
+        offset = data.find(b"Xtra") - 4
+        data[offset:offset + 4] = struct.pack(">I", 0x7FFFFFFF)
+        with open(self.filename, "wb") as fileobj:
+            fileobj.write(data)
+
+        audio = MP4(self.filename)
+        self.assertEqual(audio["\xa9nam"], [u"Regular Title"])
+        self.assertIsNone(audio.xtra)
 
 
 class TMP4(TestCase):

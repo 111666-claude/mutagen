@@ -15,6 +15,10 @@ MP4
     :show-inheritance:
     :members:
 
+.. autoclass:: mutagen.mp4.MP4Xtra
+    :show-inheritance:
+    :members:
+
 .. autoclass:: mutagen.mp4.MP4Info
     :show-inheritance:
     :members:
